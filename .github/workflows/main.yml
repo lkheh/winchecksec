@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  release:
+    types:
+      - published
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+    # run CI every day even if no PRs/merges occur
+    - cron:  '0 12 * * *'
+
+env:
+  vcpkg-commit: 90b5fb836cda4eba4569a123bca63b957f55232b
+  vcpkg-install: pe-parse uthenticode
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+          sudo pip3 install cmake-format
+
+      - name: format
+        run: make format
+
+  winchecksec:
+    strategy:
+      matrix:
+        build-type: ["Debug", "Release"]
+        platform: ["ubuntu-latest", "macos-latest"]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Restore from cache and install vcpkg
+        uses: lukka/run-vcpkg@v6
+        with:
+          vcpkgGitCommitId: ${{ env.vcpkg-commit }}
+          vcpkgArguments: ${{ env.vcpkg-install }}
+
+      - name: build
+        run: |
+          mkdir build
+          cd build
+          cmake \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DBUILD_TESTS=1 \
+            ..
+          cmake --build .
+
+      - name: tests
+        working-directory: build
+        run: ./test/winchecksec_test
+
+      - name: archive
+        if: github.event.release
+        run: zip -r build.zip build
+
+      - name: publish
+        if: github.event.release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build.zip
+          asset_name: ${{ matrix.platform }}.${{ matrix.build-type }}.zip
+          asset_content_type: application/zip
+
+  winchecksec-windows:
+    strategy:
+      matrix:
+        build-arch:
+          - { arch: "x64", triplet: "x64-windows" }
+          - { arch: "Win32", triplet: "x86-windows" }
+        build-type: ["Debug", "Release"]
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Restore from cache and install vcpkg
+      uses: lukka/run-vcpkg@v5
+      with:
+        vcpkgGitCommitId: ${{ env.vcpkg-commit }}
+        vcpkgArguments: ${{ env.vcpkg-install }}
+        vcpkgTriplet: ${{ matrix.build-arch.triplet }}
+
+    - name: build
+      shell: bash
+      run: |
+        mkdir build
+        cd build
+        cmake \
+          -G "Visual Studio 17 2022" \
+          -A ${{ matrix.build-arch.arch }} \
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+          -DBUILD_TESTS=1 \
+          ..
+        cmake --build . --config ${{ matrix.build-type }}
+
+    - name: tests
+      working-directory: build
+      run: |
+        ./test/${{ matrix.build-type }}/winchecksec_test
+
+    - name: archive
+      if: |
+        github.event.release
+      run:
+        7z a build.zip build
+
+    - name: publish
+      if: |
+        github.event.release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: build.zip
+        asset_name: windows.${{ matrix.build-arch.arch }}.${{ matrix.build-type }}.zip
+        asset_content_type: application/zip
