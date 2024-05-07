@@ -52,7 +52,7 @@ $ ./build/winchecksec
 > cd winchecksec
 > mkdir build
 > cd build
-> cmake ..
+> cmake -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake ..
 > cmake --build . --config Release
 > .\Release\winchecksec.exe C:\Windows\notepad.exe
 ```
